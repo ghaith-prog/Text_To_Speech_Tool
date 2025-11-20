@@ -1,82 +1,101 @@
-import streamlit as st
-from pytube import YouTube
 import os
 import sys
+import tempfile
 import time
-import requests
+from typing import Optional
+from urllib.parse import parse_qs, urlparse
 from zipfile import ZipFile
-import subprocess
+
+import requests
+import streamlit as st
+from yt_dlp import YoutubeDL
+from yt_dlp.utils import DownloadError, UnsupportedError
 
 st.markdown('# 📝 **Transcriber App**')
 bar = st.progress(0)
 
+if sys.version_info < (3, 10):
+    st.warning(
+        "Cette application fonctionne mieux avec Python 3.10+. "
+        "Merci d'envisager une mise à jour (avertissement de yt-dlp)."
+    )
+
 # Custom functions 
 
+# Helpers
+def normalize_youtube_url(url: str) -> Optional[str]:
+    if not url:
+        return None
+
+    parsed = urlparse(url.strip())
+
+    if parsed.netloc.endswith("youtu.be"):
+        video_id = parsed.path.lstrip("/")
+    elif "shorts" in parsed.path:
+        video_id = parsed.path.rstrip("/").split("/")[-1]
+    else:
+        query = parse_qs(parsed.query)
+        video_id = query.get("v", [None])[0]
+
+    if not video_id:
+        return None
+
+    return f"https://www.youtube.com/watch?v={video_id}"
+
+
 # 2. Retrieving audio file from YouTube video
-def get_yt(URL):
-    def find_latest_audio_file(extensions=(".mp4", ".m4a", ".webm", ".mp3", ".wav")):
-        files = [f for f in os.listdir(os.getcwd()) if f.lower().endswith(extensions)]
-        if not files:
-            return None
-        files.sort(key=lambda f: os.path.getmtime(f), reverse=True)
-        return files[0]
+def get_yt(URL, cookie_path: Optional[str] = None):
+    if not URL:
+        st.error('Merci de fournir une URL YouTube.')
+        return None
+
+    clean_url = normalize_youtube_url(URL)
+    if not clean_url:
+        st.error("URL YouTube invalide ou non prise en charge.")
+        return None
+
+    download_dir = os.getcwd()
+    ydl_opts = {
+        "format": "bestaudio/best",
+        "noplaylist": True,
+        "quiet": True,
+        "no_warnings": True,
+        "outtmpl": os.path.join(download_dir, "%(title)s.%(ext)s"),
+        "retries": 3,
+        "http_headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/129.0.0.0 Safari/537.36"
+            )
+        },
+    }
+
+    if cookie_path:
+        ydl_opts["cookiefile"] = cookie_path
 
     try:
-        video = YouTube(URL)
-        audio_stream = video.streams.filter(only_audio=True).first()
-        if audio_stream is None:
-            raise Exception('No audio stream found')
-        out_file = audio_stream.download()
-        bar.progress(10)
-        st.success(f"Audio téléchargé (pytube): {os.path.basename(out_file)}")
-        return out_file
-    except Exception as e:
-        st.warning(f"pytube a échoué ({e}). Essai avec yt-dlp...")
-        # Try python yt_dlp first
-        try:
-            from yt_dlp import YoutubeDL
-            ydl_opts = {
-                'format': 'bestaudio/best',
-                'outtmpl': '%(title)s.%(ext)s',
-                'quiet': True,
-            }
-            with YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(URL, download=True)
-                filename = ydl.prepare_filename(info)
-                bar.progress(10)
-                st.success(f"Audio téléchargé (yt-dlp): {os.path.basename(filename)}")
-                return filename
-        except Exception:
-            # Try calling yt-dlp CLI if installed
-            try:
-                cmd = ['yt-dlp', '-f', 'bestaudio', '-o', '%(title)s.%(ext)s', URL]
-                subprocess.run(cmd, check=True)
-                file = find_latest_audio_file()
-                if file:
-                    bar.progress(10)
-                    st.success(f"Audio téléchargé (yt-dlp CLI): {file}")
-                    return file
-                else:
-                    raise Exception('Aucun fichier audio trouvé après yt-dlp')
-            except Exception as e2:
-                st.error(f"Impossible de récupérer l'audio: {e2}")
-                raise
+        with YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(clean_url, download=True)
+            audio_path = ydl.prepare_filename(info)
+    except (DownloadError, UnsupportedError) as err:
+        st.error(
+            "Téléchargement impossible. Merci de vérifier le lien "
+            "ou de mettre à jour yt-dlp (pip install -U yt-dlp)."
+        )
+        st.text(err)
+        return None
+
+    bar.progress(10)
+    st.session_state["audio_path"] = audio_path
+    return audio_path
 
 # 3. Upload YouTube audio file to AssemblyAI
-def transcribe_yt():
+def transcribe_yt(audio_path):
+    if not audio_path or not os.path.exists(audio_path):
+        st.error("Aucun fichier audio à transcrire.")
+        return
 
-    current_dir = os.getcwd()
-
-    # find the most recent audio file (accept several extensions)
-    audio_exts = ('.mp4', '.m4a', '.webm', '.mp3', '.wav')
-    mp4_file = None
-    files = [f for f in os.listdir(current_dir) if f.lower().endswith(audio_exts)]
-    if not files:
-        st.error('Aucun fichier audio trouvé dans le répertoire courant')
-        raise FileNotFoundError('No audio file found')
-    files.sort(key=lambda f: os.path.getmtime(os.path.join(current_dir, f)), reverse=True)
-    mp4_file = os.path.join(current_dir, files[0])
-    filename = mp4_file
     bar.progress(20)
 
     def read_file(filename, chunk_size=5242880):
@@ -87,9 +106,11 @@ def transcribe_yt():
                     break
                 yield data
     headers = {'authorization': api_key}
-    response = requests.post('https://api.assemblyai.com/v2/upload',
-                            headers=headers,
-                            data=read_file(filename))
+    response = requests.post(
+        'https://api.assemblyai.com/v2/upload',
+        headers=headers,
+        data=read_file(audio_path)
+    )
     audio_url = response.json()['upload_url']
     #st.info('3. YouTube audio file has been uploaded to AssemblyAI')
     bar.progress(30)
@@ -142,9 +163,8 @@ def transcribe_yt():
     # 8. Save transcribed text to file
 
     # Save as TXT file
-    yt_txt = open('yt.txt', 'w')
-    yt_txt.write(transcript_output_response.json()["text"])
-    yt_txt.close()
+    with open('yt.txt', 'w', encoding='utf-8') as yt_txt:
+        yt_txt.write(transcript_output_response.json()["text"])
 
     # Save as SRT file
     srt_endpoint = endpoint + "/srt"
@@ -171,19 +191,29 @@ st.warning('Awaiting URL input in the sidebar.')
 st.sidebar.header('Input parameter')
 
 
+cookie_upload = st.sidebar.file_uploader("Fichier cookies.txt (optionnel)")
+
+temp_cookie_path: Optional[str] = None
+if cookie_upload is not None:
+    temp_cookie = tempfile.NamedTemporaryFile(delete=False, suffix=".txt")
+    temp_cookie.write(cookie_upload.read())
+    temp_cookie.flush()
+    temp_cookie_path = temp_cookie.name
+
 with st.sidebar.form(key='my_form'):
-	URL = st.text_input('Enter URL of YouTube video:')
-	submit_button = st.form_submit_button(label='Go')
+    URL = st.text_input('Enter URL of YouTube video:')
+    submit_button = st.form_submit_button(label='Go')
 
 # Run custom functions if URL is entered 
 if submit_button:
-    get_yt(URL)
-    transcribe_yt()
+    audio_file = get_yt(URL, temp_cookie_path)
+    if audio_file:
+        transcribe_yt(audio_file)
 
-    with open("transcription.zip", "rb") as zip_download:
-        btn = st.download_button(
-            label="Download ZIP",
-            data=zip_download,
-            file_name="transcription.zip",
-            mime="application/zip"
-        )
+        with open("transcription.zip", "rb") as zip_download:
+            btn = st.download_button(
+                label="Download ZIP",
+                data=zip_download,
+                file_name="transcription.zip",
+                mime="application/zip"
+            )
