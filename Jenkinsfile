@@ -10,8 +10,11 @@ pipeline {
         // Jenkins > Credentials > Add > Secret text
         // ID: assemblyai-api-key, Secret: votre_clé_api
         // ID: db-password, Secret: votre_mot_de_passe
-        ASSEMBLYAI_API_KEY = credentials('assemblyai-api-key')
-        DB_PASSWORD = credentials('db-password')
+    }
+    
+    options {
+        // Continuer même si les credentials sont manquants (gestion d'erreur dans les stages)
+        skipDefaultCheckout(false)
     }
     
     stages {
@@ -65,13 +68,16 @@ pipeline {
                 script {
                     echo "Déploiement sur le serveur Worker..."
                     
-                    // Utilisation d'Ansible pour le déploiement
-                    sh '''
-                        cd ansible
-                        export ASSEMBLYAI_API_KEY=${ASSEMBLYAI_API_KEY}
-                        export DB_PASSWORD=${DB_PASSWORD}
-                        ansible-playbook -i inventory.ini deploy-app.yml
-                    '''
+                    // Utilisation d'Ansible pour le déploiement avec credentials
+                    withCredentials([string(credentialsId: 'assemblyai-api-key', variable: 'ASSEMBLYAI_API_KEY'),
+                                     string(credentialsId: 'db-password', variable: 'DB_PASSWORD')]) {
+                        sh '''
+                            cd ansible
+                            export ASSEMBLYAI_API_KEY=${ASSEMBLYAI_API_KEY}
+                            export DB_PASSWORD=${DB_PASSWORD}
+                            ansible-playbook -i inventory.ini deploy-app.yml
+                        '''
+                    }
                 }
             }
         }
@@ -109,20 +115,35 @@ pipeline {
     post {
         always {
             echo "Pipeline terminé"
-            // Nettoyage des images Docker locales anciennes
-            sh '''
-                docker image prune -f || true
-            '''
+        }
+        cleanup {
+            script {
+                // Nettoyage des images Docker locales anciennes
+                // Utilisation de cleanup pour garantir l'exécution dans le bon contexte
+                try {
+                    sh '''
+                        docker image prune -f || true
+                    '''
+                } catch (Exception e) {
+                    echo "Nettoyage ignoré: ${e.getMessage()}"
+                }
+            }
         }
         success {
             echo "✅ Déploiement réussi!"
         }
         failure {
             echo "❌ Échec du déploiement"
-            // Rollback si nécessaire
-            sh '''
-                ssh vagrant@${WORKER_HOST} "cd /opt/transcriber && docker-compose down && docker-compose up -d" || true
-            '''
+            script {
+                // Rollback si nécessaire
+                try {
+                    sh '''
+                        ssh vagrant@${WORKER_HOST} "cd /opt/transcriber && docker-compose down && docker-compose up -d" || true
+                    '''
+                } catch (Exception e) {
+                    echo "Rollback ignoré: ${e.getMessage()}"
+                }
+            }
         }
     }
 }
