@@ -1,0 +1,89 @@
+---
+# Playbook Ansible pour déployer l'application Transcriber
+- name: Déployer l'application Transcriber sur Worker
+  hosts: workers
+  become: yes
+  vars:
+    app_dir: /opt/transcriber
+    assemblyai_key: "{{ lookup('env', 'ASSEMBLYAI_API_KEY') | default('your-api-key-here') }}"
+    db_password: "{{ lookup('env', 'DB_PASSWORD') | default('securepassword123') }}"
+
+  tasks:
+    - name: Créer le répertoire de l'application
+      file:
+        path: "{{ app_dir }}"
+        state: directory
+        owner: vagrant
+        group: vagrant
+        mode: '0755'
+
+    - name: Créer le répertoire des secrets
+      file:
+        path: "{{ app_dir }}/.secrets"
+        state: directory
+        owner: vagrant
+        group: vagrant
+        mode: '0700'
+
+    - name: Créer le fichier de clé API AssemblyAI
+      copy:
+        content: "{{ assemblyai_key }}"
+        dest: "{{ app_dir }}/.secrets/assemblyai_key.txt"
+        owner: vagrant
+        group: vagrant
+        mode: '0600'
+
+    - name: Créer le fichier de mot de passe DB
+      copy:
+        content: "{{ db_password }}"
+        dest: "{{ app_dir }}/.secrets/db_password.txt"
+        owner: vagrant
+        group: vagrant
+        mode: '0600'
+
+    - name: Copier les fichiers de l'application
+      synchronize:
+        src: "{{ playbook_dir }}/../"
+        dest: "{{ app_dir }}/"
+        rsync_opts:
+          - "--exclude=.git"
+          - "--exclude=.vagrant"
+          - "--exclude=*.mp4"
+          - "--exclude=*.zip"
+
+    - name: Créer le répertoire .streamlit
+      file:
+        path: "{{ app_dir }}/.streamlit"
+        state: directory
+        owner: vagrant
+        group: vagrant
+        mode: '0755'
+
+    - name: Créer le fichier secrets.toml pour Streamlit
+      copy:
+        content: |
+          api_key = "{{ assemblyai_key }}"
+        dest: "{{ app_dir }}/.streamlit/secrets.toml"
+        owner: vagrant
+        group: vagrant
+        mode: '0600'
+
+    - name: Construire les images Docker
+      command: docker-compose build
+      args:
+        chdir: "{{ app_dir }}"
+
+    - name: Démarrer les conteneurs
+      command: docker-compose up -d
+      args:
+        chdir: "{{ app_dir }}"
+
+    - name: Attendre que l'application soit prête
+      uri:
+        url: "http://localhost:8501/_stcore/health"
+        status_code: 200
+      register: result
+      until: result.status == 200
+      retries: 30
+      delay: 10
+
