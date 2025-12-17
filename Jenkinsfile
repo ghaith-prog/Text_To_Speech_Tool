@@ -29,10 +29,10 @@ pipeline {
             steps {
                 script {
                     echo "Construction des images Docker..."
-                    sh '''
+                    bat """
                         docker build -t ${IMAGE_NAME}:${IMAGE_TAG} .
                         docker tag ${IMAGE_NAME}:${IMAGE_TAG} ${IMAGE_NAME}:latest
-                    '''
+                    """
                 }
             }
         }
@@ -41,12 +41,12 @@ pipeline {
             steps {
                 script {
                     echo "Exécution des tests..."
-                    sh '''
-                        # Test de construction de l'image
+                    bat """
+                        REM Test de construction de l'image
                         docker run --rm ${IMAGE_NAME}:${IMAGE_TAG} python -c "import streamlit; print('Streamlit OK')"
                         docker run --rm ${IMAGE_NAME}:${IMAGE_TAG} python -c "import yt_dlp; print('yt-dlp OK')"
                         docker run --rm ${IMAGE_NAME}:${IMAGE_TAG} python -c "import requests; print('Requests OK')"
-                    '''
+                    """
                 }
             }
         }
@@ -55,10 +55,10 @@ pipeline {
             steps {
                 script {
                     echo "Scan de sécurité des images..."
-                    sh '''
-                        # Scan basique avec docker scout (si disponible)
-                        docker scout quickview ${IMAGE_NAME}:${IMAGE_TAG} || echo "Docker Scout non disponible, scan ignoré"
-                    '''
+                    bat """
+                        REM Scan basique avec docker scout (si disponible)
+                        docker scout quickview ${IMAGE_NAME}:${IMAGE_TAG} || echo Docker Scout non disponible, scan ignoré
+                    """
                 }
             }
         }
@@ -71,12 +71,12 @@ pipeline {
                     // Utilisation d'Ansible pour le déploiement avec credentials
                     withCredentials([string(credentialsId: 'assemblyai-api-key', variable: 'ASSEMBLYAI_API_KEY'),
                                      string(credentialsId: 'db-password', variable: 'DB_PASSWORD')]) {
-                        sh '''
+                        bat """
                             cd ansible
-                            export ASSEMBLYAI_API_KEY=${ASSEMBLYAI_API_KEY}
-                            export DB_PASSWORD=${DB_PASSWORD}
+                            set ASSEMBLYAI_API_KEY=${ASSEMBLYAI_API_KEY}
+                            set DB_PASSWORD=${DB_PASSWORD}
                             ansible-playbook -i inventory.ini deploy-app.yml
-                        '''
+                        """
                     }
                 }
             }
@@ -86,15 +86,16 @@ pipeline {
             steps {
                 script {
                     echo "Vérification de la santé de l'application..."
-                    sh '''
-                        # Attendre que l'application soit prête
-                        sleep 30
+                    bat """
+                        REM Attendre que l'application soit prête
+                        timeout /t 30 /nobreak
                         
-                        # Vérifier que l'application répond
-                        curl -sf http://${WORKER_HOST}:8501/_stcore/health || exit 1
+                        REM Vérifier que l'application répond
+                        curl -sf http://${WORKER_HOST}:8501/_stcore/health
+                        if errorlevel 1 exit /b 1
                         
-                        echo "Application déployée avec succès!"
-                    '''
+                        echo Application déployée avec succès!
+                    """
                 }
             }
         }
@@ -103,10 +104,10 @@ pipeline {
             steps {
                 script {
                     echo "Notification au système de monitoring..."
-                    sh '''
-                        # Forcer une vérification Nagios
-                        curl -sf http://192.168.56.12/nagios/cgi-bin/cmd.cgi?cmd_typ=7 || echo "Notification Nagios ignorée"
-                    '''
+                    bat """
+                        REM Forcer une vérification Nagios
+                        curl -sf http://192.168.56.12/nagios/cgi-bin/cmd.cgi?cmd_typ=7 || echo Notification Nagios ignorée
+                    """
                 }
             }
         }
@@ -121,9 +122,9 @@ pipeline {
                 // Nettoyage des images Docker locales anciennes
                 // Utilisation de cleanup pour garantir l'exécution dans le bon contexte
                 try {
-                    sh '''
-                        docker image prune -f || true
-                    '''
+                    bat """
+                        docker image prune -f
+                    """
                 } catch (Exception e) {
                     echo "Nettoyage ignoré: ${e.getMessage()}"
                 }
@@ -137,9 +138,9 @@ pipeline {
             script {
                 // Rollback si nécessaire
                 try {
-                    sh '''
-                        ssh vagrant@${WORKER_HOST} "cd /opt/transcriber && docker-compose down && docker-compose up -d" || true
-                    '''
+                    bat """
+                        ssh vagrant@${WORKER_HOST} "cd /opt/transcriber && docker-compose down && docker-compose up -d"
+                    """
                 } catch (Exception e) {
                     echo "Rollback ignoré: ${e.getMessage()}"
                 }
