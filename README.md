@@ -51,9 +51,16 @@ Application web de transcription de vidéos YouTube utilisant l'IA (AssemblyAI),
 
 ## 🚀 Démarrage Rapide
 
+### ⚡ Installation Rapide (5 minutes)
+
+**Si vous n'avez rien installé**, suivez le [Guide de Démarrage Rapide](QUICK_START.md)
+
+**Pour une installation complète étape par étape**, consultez le [Guide d'Installation Complet](INSTALLATION.md)
+
 ### Prérequis
-- VirtualBox 6.1+
-- Vagrant 2.3+
+- VirtualBox 6.1+ (pour l'infrastructure complète)
+- Vagrant 2.3+ (pour l'infrastructure complète)
+- Docker Desktop (pour l'application seule)
 - Git
 
 ### 1. Cloner le projet
@@ -98,6 +105,8 @@ docker-compose up --build
 ```
 
 ## 📋 Pipeline CI/CD
+
+> 📖 **Configuration Jenkins** : Consultez [JENKINS_SETUP.md](JENKINS_SETUP.md) pour configurer les credentials et créer le pipeline.
 
 Le pipeline Jenkins exécute automatiquement:
 

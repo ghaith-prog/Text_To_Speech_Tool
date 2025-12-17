@@ -6,6 +6,10 @@ pipeline {
         IMAGE_NAME = 'transcriber-app'
         IMAGE_TAG = "${BUILD_NUMBER}"
         WORKER_HOST = '192.168.56.11'
+        // Les IDs de credentials doivent être configurés dans Jenkins
+        // Jenkins > Credentials > Add > Secret text
+        // ID: assemblyai-api-key, Secret: votre_clé_api
+        // ID: db-password, Secret: votre_mot_de_passe
         ASSEMBLYAI_API_KEY = credentials('assemblyai-api-key')
         DB_PASSWORD = credentials('db-password')
     }
